@@ -1,0 +1,14 @@
+services:
+  dinstar-push-gateway:
+    image: podpalch/dinstar-push-gateway:latest
+    container_name: dinstar-push-gateway
+    environment:
+      DUMP_DIR: /dumps
+      GATEWAY_BASE_URL: https://192.168.15.127
+      GATEWAY_USERPWD: "admin:admin"
+      GATEWAY_SEND_SMS_PATH: /api/send_sms
+    ports:
+      - "24800:8000"
+    volumes:
+      - /volume3/docker/dinstar-push-gateway/dumps:/dumps
+    restart: unless-stopped
