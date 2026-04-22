@@ -7,6 +7,10 @@ services:
       GATEWAY_BASE_URL: https://192.168.15.127
       GATEWAY_USERPWD: "admin:admin"
       GATEWAY_SEND_SMS_PATH: /api/send_sms
+      ASTERISK_HOST: 192.168.1.170
+      ASTERISK_PORT: "5065"
+      FORWARD_TO_SIP: "0:1000"
+      SIP_FROM_DOMAIN: dinstar-push.local
     ports:
       - "24800:8000"
     volumes:

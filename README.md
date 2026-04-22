@@ -4,6 +4,7 @@ FastAPI service for two jobs:
 
 - capture every inbound Dinstar push request as JSON
 - send outbound SMS through the Dinstar UC2000-VE HTTP API
+- forward inbound Dinstar SMS events to Asterisk as SIP `MESSAGE`
 
 The original idea was to point the Dinstar UC2000-VE "New Version" push URL at this service first, observe the exact payloads the gateway sends, and only then implement a stricter integration. That recorder is still in place, and now there is also a simple SMS sender UI and API.
 
@@ -55,6 +56,10 @@ The Compose file now passes the Dinstar connection settings through environment 
 - `GATEWAY_BASE_URL=https://192.168.15.127`
 - `GATEWAY_USERPWD=admin:...`
 - `GATEWAY_SEND_SMS_PATH=/api/send_sms`
+- `ASTERISK_HOST=192.168.1.170`
+- `ASTERISK_PORT=5065`
+- `FORWARD_TO_SIP=0:1000`
+- `SIP_FROM_DOMAIN=dinstar-push.local`
 
 If the password contains `#` or other YAML-sensitive characters, quote the whole value in `docker-compose.yml`.
 
@@ -67,6 +72,56 @@ These settings are used by the SMS sender endpoint and web page. The HTTP client
 - SSL peer verification disabled
 - SSL host verification disabled
 - forwarding performed by Python `pycurl` so the send path stays in Python while still matching the original cURL behavior closely
+
+`FORWARD_TO_SIP` is a comma-separated or newline-separated list of routing rules in the form `port:sip_extension`. Example:
+
+```text
+0:1000
+```
+
+The gateway now prefers direct `port` matching for inbound SMS, which is more reliable because the Dinstar inbound `sms` event always contains `port`. For example, with your dumps:
+
+- `imsi=25501123322342`
+- `port=0`
+- `gsm_number=38067000001`
+
+So `0:1000` routes inbound SMS received on modem port `0` to SIP extension `1000`.
+
+## Inbound SMS forwarding to Asterisk
+
+When a push payload contains:
+
+```json
+{"sms":[...]}
+```
+
+the gateway now:
+
+1. resolves which GSM number received the SMS using the saved Dinstar register state
+2. matches the inbound SMS `port` against `FORWARD_TO_SIP`
+3. sends a SIP `MESSAGE` over UDP to Asterisk at `ASTERISK_HOST:ASTERISK_PORT`
+4. writes a `push_processing_*.json` dump with the forwarding result
+
+If you configure Asterisk to challenge SIP `MESSAGE` requests, the gateway can retry once with SIP digest auth using `SIP_USERNAME` and `SIP_PASSWORD`. In the dedicated-port no-auth setup, those variables can be omitted.
+
+For a direct host-side SIP SIMPLE probe outside the gateway runtime, you can use:
+
+```bash
+python3 scripts/test_sip_message.py --host 192.168.1.170 --port 5065 --target 1000
+```
+
+The SIP message body includes:
+
+- receiving GSM number
+- target SIP extension
+- sender number or alphanumeric sender
+- SMSC
+- port
+- timestamp
+- IMSI
+- original text
+
+If Asterisk is unreachable, no route matches, or the GSM number cannot be resolved yet, the original Dinstar capture still succeeds and the failure reason is recorded in the processing dump.
 
 ## SMS UI and API
 
@@ -119,6 +174,8 @@ http://YOUR_SERVER_IP:24800/dinstar/push
 ```
 
 Because the FastAPI app is catch-all, it will also accept `/`, `/api/...`, or any other path you configure on the device.
+
+For SIP forwarding to work after a restart, keep Dinstar `Push Register Status` enabled as well so the app can rebuild the GSM-number-to-IMSI/port mapping automatically.
 
 ## Dinstar HTTP API research
 
@@ -195,11 +252,11 @@ curl -k --anyauth -u admin:admin \
 ```
 
 ```json
-{"sn":"xxxx-xxxx-xxxx-xxxx","sms_result":[{"port":1,"number":"10086","time":"2016-07-12 01:46:02","status":"DELIVERED","count":1,"succ_count":1,"ref_id":215,"imsi":"460004642148063"}]}
+{"sn":"xxxx-xxxx-xxxx-xxxx","sms_result":[{"port":1,"number":"10086","time":"2016-07-12 01:46:02","status":"DELIVERED","count":1,"succ_count":1,"ref_id":215,"imsi":"4600"}]}
 ```
 
 ```json
-{"sn":"xxxx-xxxx-xxxx-xxxx","sms_deliver_status":[{"port":1,"number":"10086","time":"2016-07-12 15:46:53","ref_id":215,"status_code":0,"imsi":"460004642148063"}]}
+{"sn":"xxxx-xxxx-xxxx-xxxx","sms_deliver_status":[{"port":1,"number":"10086","time":"2016-07-12 15:46:53","ref_id":215,"status_code":0,"imsi":"4600"}]}
 ```
 
 ```json
